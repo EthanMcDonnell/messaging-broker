@@ -8,8 +8,8 @@ import logging
 from pathlib import Path
 from typing import Iterator
 
-from message_parser import extract_text, normalize_text
-from responder import RESPONSE_MARKER
+from .message_parser import extract_text, normalize_text
+from .responder import RESPONSE_MARKER
 
 DB_PATH = Path.home() / "Library/Messages/chat.db"
 

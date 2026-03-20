@@ -1,1 +1,4 @@
 pyyaml>=6.0
+
+# Telegram platform
+python-telegram-bot>=21.0
