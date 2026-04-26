@@ -21,7 +21,7 @@ Exit codes:
     2  — configuration error
 
 Library usage:
-    from telegram.ask import ask_user
+    from tg.ask import ask_user
     import asyncio
     index = asyncio.run(ask_user(
         question="Pick one?",

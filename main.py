@@ -62,6 +62,15 @@ def get_project(config: dict, name: str) -> dict | None:
     return None
 
 
+def filter_projects_for_platform(config: dict, platform: str) -> dict:
+    """Return a copy of config with only projects available on the given platform."""
+    filtered = [
+        p for p in config.get("projects", [])
+        if platform in p.get("platforms", ["imessage", "telegram"])
+    ]
+    return {**config, "projects": filtered}
+
+
 def format_project_list(projects: list[dict], current: str | None) -> str:
     lines = ["Available projects:"]
     for p in projects:
@@ -121,6 +130,7 @@ def process_message(text: str, config: dict, state: State, dry_run: bool = False
 # ─── iMessage platform ────────────────────────────────────────────────────────
 
 def run_imessage(config: dict, state: State, dry_run: bool = False) -> None:
+    config = filter_projects_for_platform(config, "imessage")
     from imessage.watcher import current_db_timestamp, fetch_new_messages, get_db_connection
     from imessage.responder import send_message
 
@@ -192,11 +202,47 @@ def run_imessage(config: dict, state: State, dry_run: bool = False) -> None:
         time.sleep(poll_interval)
 
 
+def process_message_for_project(text: str, config: dict, project: dict, dry_run: bool = False) -> str:
+    """Process a message for a known project, bypassing intent routing."""
+    prompt = sanitize_prompt(text)
+    max_len = config.get("claude", {}).get("max_response_length", 16000)
+    timeout = config.get("claude", {}).get("timeout", 120)
+
+    if dry_run:
+        return f"[DRY RUN] Would ask Claude in {project['path']}:\n{prompt[:200]}"
+
+    response = ask_claude(prompt, project["path"], project.get("allowed_tools", []), timeout)
+
+    if len(response) > max_len:
+        response = response[:max_len] + f"\n\n[Response truncated at {max_len} chars]"
+
+    return response
+
+
 # ─── Telegram platform ────────────────────────────────────────────────────────
 
 def run_telegram(config: dict, state: State, dry_run: bool = False) -> None:
-    from telegram.bot import run_telegram_bot
-    run_telegram_bot(config, state, process_message, dry_run=dry_run)
+    config = filter_projects_for_platform(config, "telegram")
+    from tg.bot import run_telegram_bot
+    from jobs import JobStore
+    import api_server
+
+    job_store = JobStore()
+
+    api_cfg = config.get("api_server", {})
+    host = api_cfg.get("host", "127.0.0.1")
+    port = api_cfg.get("port", 8765)
+    api_server.start(config, job_store, host=host, port=port)
+
+    def _process_for_project(text: str, project: dict) -> str:
+        return process_message_for_project(text, config, project, dry_run=dry_run)
+
+    run_telegram_bot(
+        config, state, process_message,
+        dry_run=dry_run,
+        job_store=job_store,
+        process_for_project_fn=_process_for_project,
+    )
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
@@ -237,7 +283,8 @@ def main():
     state = State()
     if not state.current_project:
         default = config.get("default_project")
-        if default:
+        topics_configured = any(p.get("telegram_topic_id") for p in config.get("projects", []))
+        if default and not (platform == "telegram" and topics_configured):
             state.set_project(default)
 
     logger.info("Platform: %s", platform)

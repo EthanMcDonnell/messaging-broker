@@ -25,6 +25,18 @@ telegram:
   bot_token: "YOUR_BOT_TOKEN"
   # Your Telegram user ID — send a message to @userinfobot to find it
   allowed_user_id: 123456789
+  # Supergroup chat ID for topic-based routing (negative number).
+  # Required if you use "topic" when posting via the HTTP API.
+  # To find: open the group in Telegram Web — the URL is /c/<group_id>/<topic_id>/<msg_id>
+  # Prefix the group_id with -100 for the Bot API, e.g. /c/1234567890 → -1001234567890
+  # telegram_group_id: -1001234567890
+
+# ─── API Server (Telegram platform only) ──────────────────────────────────────
+# HTTP server that lets other projects post jobs to Telegram and receive responses.
+# Runs automatically when platform is "telegram".
+api_server:
+  host: "127.0.0.1"
+  port: 8765
 
 # ─── Shared ───────────────────────────────────────────────────────────────────
 
@@ -45,28 +57,40 @@ rate_limits:
 projects:
   - name: my-project
     path: /Users/you/Documents/my-project
-    aliases:
-      - my project
-      - project
+    # platforms: which transports can use this project.
+    # Options: imessage, telegram. Omit to allow both (default).
+    platforms: [imessage, telegram]
+    # telegram_topic_id: the thread ID from the Telegram Web URL.
+    # URL format: /c/<group_id>/<topic_id>/<msg_id> — use the middle number.
+    # e.g. /c/1234567890/3/4 → telegram_topic_id: 3
+    # Once set, messages in that topic route here automatically,
+    # and POST /send with "topic": "my-project" will post into it.
+    # telegram_topic_id: 3
     allowed_tools:
       - Read
       - Glob
       - Grep
       - LS
 
-  # Example: project with edit access
-  # - name: my-website
-  #   path: /Users/you/Documents/my-website
-  #   aliases:
-  #     - website
-  #     - my site
+  # Example: telegram-only project mapped to a topic
+  # - name: articles
+  #   path: /Users/you/Documents/articles
+  #   platforms: [telegram]
+  #   telegram_topic_id: 5
+  #   allowed_tools:
+  #     - Read
+  #     - Edit
+  #     - Write
+
+  # Example: imessage-only project
+  # - name: personal
+  #   path: /Users/you/Documents/personal
+  #   platforms: [imessage]
   #   allowed_tools:
   #     - Read
   #     - Glob
   #     - Grep
   #     - LS
-  #     - Edit
-  #     - Write
 
 
 # Default project on startup (must match a project name above)

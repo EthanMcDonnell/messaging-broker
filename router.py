@@ -1,6 +1,7 @@
 """
 Routes incoming messages to the correct handler.
 Uses fuzzy keyword matching so Siri voice dictation doesn't need exact phrases.
+Project matching is by name only — aliases have been removed.
 """
 
 import re
@@ -50,11 +51,7 @@ AMBIGUITY_THRESHOLD = 0.15  # if top two matches are within this delta, it's amb
 
 
 def detect_intent(text: str, projects: list[dict]) -> RouteResult:
-    """
-    Detect the intent of the message and return a RouteResult.
-
-    projects: list of project dicts from config (each has 'name' and optional 'aliases')
-    """
+    """Detect the intent of the message and return a RouteResult."""
     text_lower = text.lower().strip()
 
     if _STATUS_PATTERNS.search(text_lower):
@@ -71,16 +68,8 @@ def detect_intent(text: str, projects: list[dict]) -> RouteResult:
 
 
 def _find_project(text: str, projects: list[dict]) -> RouteResult:
-    """
-    Fuzzy-match a project name from the message text.
-    Builds a flat list of (score, project_name) for each project and its aliases.
-    """
-    # Build candidate list: project name + all aliases
-    candidates: list[tuple[str, str]] = []  # (candidate_text, project_name)
-    for p in projects:
-        candidates.append((p["name"], p["name"]))
-        for alias in p.get("aliases", []):
-            candidates.append((alias.lower(), p["name"]))
+    """Fuzzy-match a project name from the message text."""
+    candidates: list[tuple[str, str]] = [(p["name"], p["name"]) for p in projects]
 
     scored: list[tuple[float, str]] = []
     for candidate_text, project_name in candidates:

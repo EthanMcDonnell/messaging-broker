@@ -17,6 +17,9 @@ main.py                  ← entry point + shared process_message()
 ├── router.py            ← intent detection (switch / list / ask)
 ├── security.py          ← rate limiting, input sanitization
 ├── state.py             ← persists current project across restarts
+├── jobs.py              ← SQLite store for async API jobs
+├── dispatcher.py        ← routes job responses (webhook / script / claude)
+├── api_server.py        ← HTTP API server (Telegram platform only)
 │
 ├── imessage/
 │   ├── watcher.py       ← polls ~/Library/Messages/chat.db
@@ -24,7 +27,7 @@ main.py                  ← entry point + shared process_message()
 │   └── message_parser.py ← parses iMessage attributedBody blobs
 │
 └── telegram/
-    └── bot.py           ← Telegram bot, shares all routing/Claude logic
+    └── bot.py           ← Telegram bot, topic routing, job callbacks
 ```
 
 ---
@@ -142,7 +145,148 @@ These work on both platforms and are matched with fuzzy intent detection (design
 | `use [name]` | Also switches project |
 | Anything else | Sent to Claude in the current project |
 
-Project names and aliases are fuzzy-matched, so Siri-dictated phrases like "hey switch to the bridge project" will resolve correctly.
+Project names are fuzzy-matched, so Siri-dictated phrases like "hey switch to the bridge project" will resolve correctly.
+
+---
+
+## HTTP API (Telegram platform)
+
+When running with `--platform telegram`, an HTTP server starts automatically on `http://localhost:8765`. Other projects on your machine can post content to Telegram and receive responses back.
+
+### POST /send
+
+Post content to Telegram, optionally with buttons and a response handler.
+
+**Request body:**
+
+```json
+{
+  "content": "Text to send to Telegram",
+  "topic": "articles",
+  "buttons": ["Delete", "Keep"],
+  "on_response": {
+    "type": "webhook",
+    "url": "http://localhost:5001/callback"
+  }
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `content` | yes | Text to send |
+| `topic` | no | Project name from `config.yaml` — resolves to its `telegram_topic_id` automatically |
+| `topic_id` | no | Raw Telegram topic thread ID — use `topic` instead unless you need to override |
+| `buttons` | no | Array of button labels (strings), or objects `{"label": "...", "action": "..."}`. Action defaults to lowercased label if not specified. |
+| `on_response` | no | What to do when a button is pressed — see below |
+
+**`on_response` types:**
+
+```json
+{ "type": "webhook", "url": "http://localhost:5001/cb" }
+```
+POSTs `{"job_id", "action", "content"}` to the URL when a button is pressed.
+
+```json
+{ "type": "script", "path": "/abs/path/to/handler.py" }
+```
+Runs the script with the job payload as JSON via stdin.
+
+```json
+{
+  "type": "claude",
+  "project": "my-project",
+  "prompt_template": "User selected \"{action}\" for: {content}",
+  "result_webhook": "http://localhost:5001/result"
+}
+```
+Runs Claude in the named project with the formatted prompt. Sends Claude's response back to Telegram. Optionally also POSTs `{"job_id", "action", "content", "claude_response"}` to `result_webhook`.
+
+**Response:**
+
+```json
+{ "job_id": "a3f2c1b4" }
+```
+
+**Example (curl):**
+
+```bash
+curl -X POST http://localhost:8765/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Article: Why distributed systems are hard",
+    "topic": "articles",
+    "buttons": ["Delete", "Keep"],
+    "on_response": {"type": "webhook", "url": "http://localhost:5001/cb"}
+  }'
+```
+
+**Example (Python):**
+
+```python
+import requests
+
+r = requests.post("http://localhost:8765/send", json={
+    "content": "Video idea: 5 Python patterns that kill performance",
+    "topic": "video-ideas",
+    "buttons": ["Develop", "Skip"],
+    "on_response": {
+        "type": "claude",
+        "project": "content",
+        "prompt_template": "Develop this video idea into a full outline: {content}",
+        "result_webhook": "http://localhost:5001/outline-result"
+    }
+})
+job_id = r.json()["job_id"]
+```
+
+---
+
+### GET /jobs/{id}
+
+Check the status of a posted job.
+
+```bash
+curl http://127.0.0.1:8765/jobs/a3f2c1b4
+```
+
+**Response:**
+
+```json
+{
+  "id": "a3f2c1b4",
+  "content": "Article: ...",
+  "status": "responded",
+  "action": "keep",
+  "topic_id": 123,
+  "created_at": "2026-04-26T10:00:00",
+  "responded_at": "2026-04-26T14:32:11"
+}
+```
+
+`status` is `"pending"` until a button is pressed, then `"responded"`. `action` is the button's action value.
+
+---
+
+### Telegram group topics setup
+
+To post into topics, you need a Telegram supergroup with Topics enabled:
+
+1. Create a private supergroup and enable Topics (**Group Settings → Topics**)
+2. Add your bot as admin with permission to post messages
+3. Get the group ID — forward any message from the group to [@userinfobot](https://t.me/userinfobot), or check the URL in Telegram Web (`/c/<group_id>/...`)
+4. Get topic IDs from the URL when viewing a topic: `/c/<group_id>/<topic_id>/<message_id>`
+5. Add to `config.yaml`:
+
+```yaml
+telegram:
+  telegram_group_id: -100123456789
+
+projects:
+  - name: articles
+    path: /Users/you/Documents/articles
+    platforms: [telegram]
+    telegram_topic_id: 3
+```
 
 ---
 
